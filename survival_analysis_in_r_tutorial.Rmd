@@ -17,11 +17,15 @@ Please click the GitHub icon in the header above to go to the GitHub repository 
 
 ```{r setup, include=FALSE}
 # load packages
+
 library(knitr)
 library(tidyverse)
 library(lubridate)
 library(survival)
 library(survminer)
+library(tidyr)
+
+
 
 # set output options
 opts_chunk$set(fig.width = 5, 
@@ -98,9 +102,16 @@ The `lung` dataset is available from the `survival` package in `R`. The data con
 - time:	Survival time in days
 - status:	censoring status 1=censored, 2=dead
 - sex: Male=1 Female=2
-
+C:\Users\Tom McKeon\Downloads
 
 ## What is censoring?
+```{r}
+pcr <- read.csv("C:/Users/Tom McKeon/Downloads/PCRdata_combined_05282020.csv", header = TRUE)
+
+```
+
+
+
 
 ```{r trial_anatomy, echo = FALSE}
 include_graphics(here::here("img", "trial_anatomy.png"))
@@ -184,7 +195,7 @@ The observed times and an event indicator are provided in the `lung` data
 - status:	censoring status 1=censored, 2=dead ($\delta_i$)
 
 ```{r viewlung, echo = FALSE}
-kable(head(lung))
+kable(head(pcr))
 ```
 
 
@@ -194,14 +205,21 @@ Data will often come with start and end dates rather than pre-calculated surviva
 
 Let's create a small example dataset with variables `sx_date` for surgery date and `last_fup_date` for the last follow-up date.
 
-```{r datedata}
-date_ex <- 
-  tibble(
-    sx_date = c("2007-06-22", "2004-02-13", "2010-10-27"), 
-    last_fup_date = c("2017-04-15", "2018-07-04", "2016-10-31")
-    )
+## formatting our pcr data's datefields
+```{r}
+pcr$DX_day <- "01"
+```
 
-date_ex
+```{r}
+pcr <- unite(pcr, startdate, c(DXyear, DXmonth, DX_day), remove=FALSE)
+```
+
+```{r format_date1}
+pcr$DateLastContact <- as.character(pcr$DateLastContact)
+```
+
+```{r}
+pcr$startdate
 ```
 
 We see these are both character variables, which will often be the case, but we need them to be formatted as dates. 
@@ -210,12 +228,15 @@ We see these are both character variables, which will often be the case, but we 
 ## Formatting dates - base R
 
 ```{r format_date1}
-date_ex %>% 
+pcr<- pcr %>% 
   mutate(
-    sx_date = as.Date(sx_date, format = "%Y-%m-%d"), 
-    last_fup_date = as.Date(last_fup_date, format = "%Y-%m-%d") 
+    startdate = as.Date(startdate, format = "%Y_%m_%d"), 
+    DateLastContact = as.Date(DateLastContact, format = "%Y%m%d"),
     )
+
 ```
+
+
 
 - Note that in base `R` the format must include the separator as well as the symbol. e.g. if your date is in format m/d/Y then you would need `format = "%m/%d/%Y"`
 - See a full list of date format symbols at [https://www.statmethods.net/input/dates.html](https://www.statmethods.net/input/dates.html)
@@ -250,12 +271,12 @@ date_ex <-
 ```
 
 ```{r difftime_ex1}
-date_ex %>% 
+pcr %>% 
   mutate(
     os_yrs = 
       as.numeric(
-        difftime(last_fup_date, 
-                 sx_date, 
+        difftime(DateLastContact, 
+                 startdate, 
                  units = "days")) / 365.25
     )
 ```
@@ -266,11 +287,12 @@ date_ex %>%
 Using the `lubridate` package, the operator `%--%` designates a time interval, which is then converted to the number of elapsed seconds using `as.duration` and finally converted to years by dividing by `dyears(1)`, which gives the number of seconds in a year.
 
 ```{r difftime_ex2, message = FALSE, warning = FALSE}
-date_ex %>% 
+pcr<- pcr %>% 
   mutate(
     os_yrs = 
-      as.duration(sx_date %--% last_fup_date) / dyears(1)
+      as.duration(startdate %--% DateLastContact) / dyears(1)
     )
+
 ```
 
 - *Note*: we need to load the `lubridate` package using a call to `library` in order to be able to access the special operators (similar to situation with pipes)
@@ -319,16 +341,15 @@ The Kaplan-Meier method is the most common way to estimate survival times and pr
 - The `Surv` function from the `survival` package creates a survival object for use as the response in a model formula. There will be one entry for each subject that is the survival time, which is followed by a `+` if the subject was censored. Let's look at the first 10 observations:
 
 ```{r survfunc}
-Surv(lung$time, lung$status)[1:10]
+Surv(pcr$os_yrs, pcr$VitalStatus)[1:10]
 ```
-
 
 ## Estimating survival curves with the Kaplan-Meier method
 
 - The `survfit` function creates survival curves based on a formula. Let's generate the overall survival curve for the entire cohort, assign it to object `f1`, and look at the `names` of that object:
 
 ```{r lung_survfit}
-f1 <- survfit(Surv(time, status) ~ 1, data = lung)
+f1 <- survfit(Surv(os_yrs, VitalStatus) ~ 1, data = pcr)
 names(f1)
 ```
 
@@ -343,7 +364,7 @@ Some key components of this `survfit` object that will be used to create surviva
 Now we plot the `survfit` object in base `R` to get the Kaplan-Meier plot.
 
 ```{r}
-plot(survfit(Surv(time, status) ~ 1, data = lung), 
+plot(survfit(Surv(os_yrs, VitalStatus) ~ 1, data = pcr), 
      xlab = "Days", 
      ylab = "Overall survival probability")
 ```
@@ -361,7 +382,7 @@ Alternatively, the `ggsurvplot` function from the `survminer` package is built o
 
 ```{r, message = FALSE, warning = FALSE}
 ggsurvplot(
-    fit = survfit(Surv(time, status) ~ 1, data = lung), 
+    fit = survfit(Surv(os_yrs, VitalStatus) ~ 1, data = pcr), 
     xlab = "Days", 
     ylab = "Overall survival probability")
 ```
@@ -377,7 +398,7 @@ One quantity often of interest in a survival analysis is the probability of surv
 For example, to estimate the probability of survivng to $1$ year, use `summary` with the `times` argument (*Note* the `time` variable in the `lung` data is actually in days, so we need to use `times = 365.25`)
 
 ```{r 5yrest}
-summary(survfit(Surv(time, status) ~ 1, data = lung), times = 365.25)
+summary(survfit(Surv(os_yrs, VitalStatus) ~ 1, data = pcr), times = 365.25)
 ```
 
 We find that the $1$-year probability of survival in this study is `r round(summary(survfit(Surv(time, status) ~ 1, data = lung), times = 365.25)$surv * 100)`%. 
@@ -392,7 +413,7 @@ The $1$-year survival probability is the point on the y-axis that corresponds to
 ```{r, message = FALSE, echo = FALSE, fig.height = 5}
 plot_main <- 
   ggsurvplot(
-    data = lung, 
+    data = pcr, 
     fit = f1,
     xlab = "Months",
     legend = "none",
@@ -460,7 +481,7 @@ Another quantity often of interest in a survival analysis is the average surviva
 We can obtain this directly from our `survfit` object
 
 ```{r}
-survfit(Surv(time, status) ~ 1, data = lung)
+survfit(Surv(os_yrs, VitalStatus) ~ 1, data = pcr)
 ```
 
 We see the median survival time is `r round(summary(f1)$table["median"], 1)` days The lower and upper bounds of the 95\% confidence interval are also displayed.
@@ -534,7 +555,7 @@ ggsurvplot(
 We get the log-rank p-value using the `survdiff` function. For example, we can test whether there was a difference in survival time according to sex in the `lung` data
 
 ```{r}
-survdiff(Surv(time, status) ~ sex, data = lung)
+survdiff(Surv(os_yrs, VitalStatus) ~ Sex, data = pcr)
 ```
 
 
@@ -543,7 +564,7 @@ survdiff(Surv(time, status) ~ sex, data = lung)
 It's actually a bit cumbersome to extract a p-value from the results of `survdiff`. Here's a line of code to do it 
 
 ```{r}
-sd <- survdiff(Surv(time, status) ~ sex, data = lung)
+sd <- survdiff(Surv(os_yrs, VitalStatus) ~ Sex, data = pcr)
 1 - pchisq(sd$chisq, length(sd$n) - 1)
 ```
 
@@ -575,7 +596,7 @@ Some key assumptions of the model:
 We can fit regression models for survival data using the `coxph` function, which takes a `Surv` object on the left hand side and has standard syntax for regression formulas in `R` on the right hand side.
 
 ```{r}
-coxph(Surv(time, status) ~ sex, data = lung)
+coxph(Surv(os_yrs, VitalStatus) ~ Sex, data = pcr)
 ```
 
 
@@ -585,7 +606,7 @@ We can see a tidy version of the output using the `tidy` function from the `broo
 
 ```{r}
 broom::tidy(
-  coxph(Surv(time, status) ~ sex, data = lung), 
+  coxph(Surv(os_yrs, VitalStatus) ~ Sex, data = pcr), 
   exp = TRUE
   ) %>% 
   kable()
@@ -593,8 +614,9 @@ broom::tidy(
 
 Or use `tbl_regression` from the `gtsummary` package
 
+
 ```{r}
-coxph(Surv(time, status) ~ sex, data = lung) %>% 
+coxph(Surv(os_yrs, VitalStatus) ~ Sex, data = pcr) %>% 
   gtsummary::tbl_regression(exp = TRUE) 
 ```
 
@@ -609,9 +631,9 @@ coxph(Surv(time, status) ~ sex, data = lung) %>%
 - So our HR = 0.59 implies that around 0.6 times as many females are dying as males, at any given time.
 
 ```{r echo = FALSE, fig.height = 6}
-fit4 <- survfit(Surv(time, status) ~ sex, data = lung)
+fit4 <- survfit(Surv(os_yrs, VitalStatus) ~ Sex, data = pcr)
 
-ggsurvplot(data = lung, 
+ggsurvplot(data = pcr, 
            fit = fit4,
            xlab = "Months",
            xscale = 30.4,
